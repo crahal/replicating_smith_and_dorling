@@ -1,4 +1,4 @@
-<img src="./output/health_by_constituency_bivariate_choropleth.svg" width="700"/>
+<img src="./output/deprivation_by_constituency_bivariate_choropleth.svg" width="700"/>
 
 ## :bar_chart: Replicating Smith and Dorling (1996)  :chart_with_upwards_trend:
 
