@@ -43,72 +43,120 @@ def make_summary_tables(df_gpd):
 
 def plot_over_time(df_sii, df_hid):
     colors = ['#E4003B', '#0087DC', '#4a6741']
-    fig = plt.figure(figsize=(10, 4.75))
+    fig = plt.figure(figsize=(11, 5.5))
     gs = gridspec.GridSpec(2, 2, width_ratios=[1, 1])
     ax1 = plt.subplot(gs[0:, 0])
     ax2 = plt.subplot(gs[0, 1])
     ax2_twinx = ax2.twinx()
     ax3 = plt.subplot(gs[1, 1])
     ax3_twinx = ax3.twinx()
-
     females = df_sii[df_sii['sex'] == 'Females']
+    first_9_indices = females.index[:9]
+    remaining_indices = females.index[9:]
+
     ax1.errorbar(
-        females.index,
-        females['value'],
-        yerr=[females['value'] - females['lower95ci'],
-              females['upper95ci'] - females['value']],
-        fmt='o',
-        label='Females',
-        markersize=7,
-        color=colors[0],
-        markeredgecolor='k',
-        ecolor='k',
-        linewidth=.5,
-        capsize=6
+    first_9_indices,
+    females.loc[first_9_indices, 'value'],
+    yerr=[females.loc[first_9_indices, 'value'] - females.loc[first_9_indices, 'lower95ci'],
+          females.loc[first_9_indices, 'upper95ci'] - females.loc[first_9_indices, 'value']],
+    fmt='s',
+    markersize=7,
+    color=colors[0],
+    markeredgecolor='k',
+    ecolor='k',
+    linewidth=.5,
+    capsize=6
     )
+
+    # Plot the remaining points in blue
+    ax1.errorbar(
+    remaining_indices,
+    females.loc[remaining_indices, 'value'],
+    yerr=[females.loc[remaining_indices, 'value'] - females.loc[remaining_indices, 'lower95ci'],
+          females.loc[remaining_indices, 'upper95ci'] - females.loc[remaining_indices, 'value']],
+    fmt='s',
+    markersize=7,
+    color=colors[1],
+    markeredgecolor='k',
+    ecolor='k',
+    linewidth=.5,
+    capsize=6
+    )
+
+
 
     males = df_sii[df_sii['sex'] == 'Males']
+    male_lab = males.loc[females.index < '2010-12']
+    male_con = males.loc[females.index >= '2010-12']
+
     ax1.errorbar(
-        males.index,
-        males['value'],
-        yerr=[males['value'] - males['lower95ci'],
-              males['upper95ci'] - males['value']],
-        fmt='o',
-        label='Males',
-        markersize=7,
-        color=colors[1],
-        markeredgecolor='k',
-        ecolor='k',
-        linewidth=.5,
-        capsize=6
+    first_9_indices,
+    males.loc[first_9_indices, 'value'],
+    yerr=[males.loc[first_9_indices, 'value'] - males.loc[first_9_indices, 'lower95ci'],
+          males.loc[first_9_indices, 'upper95ci'] - males.loc[first_9_indices, 'value']],
+    fmt='o',
+    markersize=7,
+    color=colors[0],
+    markeredgecolor='k',
+    ecolor='k',
+    linewidth=.5,
+    capsize=6
     )
 
+    # Plot the remaining points in blue
+    ax1.errorbar(
+    remaining_indices,
+    males.loc[remaining_indices, 'value'],
+    yerr=[males.loc[remaining_indices, 'value'] - males.loc[remaining_indices, 'lower95ci'],
+          males.loc[remaining_indices, 'upper95ci'] - males.loc[remaining_indices, 'value']],
+    fmt='o',
+    markersize=7,
+    color=colors[1],
+    markeredgecolor='k',
+    ecolor='k',
+    linewidth=.5,
+    capsize=6
+    )
+
+
     legend_elements1 = [
+        Line2D([0], [0],
+               marker='o',
+               color='w',
+               markerfacecolor=colors[0],
+               markeredgecolor='k',
+               markersize=6,
+               label='Male (Pre-2010)'),
         Line2D([0], [0],
                marker='o',
                color='w',
                markerfacecolor=colors[1],
                markeredgecolor='k',
                markersize=6,
-               label='Male SII'),
+               label='Male (Post-2010)'),
+
         Line2D([0], [0],
-               marker='o',
+               marker='s',
                color='w',
                markerfacecolor=colors[0],
                markeredgecolor='k',
-               markersize=6, label='Female SII'),
-        Line2D(
-            [0, 0.25], [0, 0],
-            linewidth=1,
-            marker=None,
-            color='k',
-            label='95% CI'
-        )
+               markersize=6,
+               label='Female (Pre-2010)'),
+        Line2D([0], [0],
+               marker='s',
+               color='w',
+               markerfacecolor=colors[1],
+               markeredgecolor='k',
+               markersize=6,
+               label='Female (Post-2010)'),
+
+
+
     ]
     ax1.legend(handles=legend_elements1,
                loc='lower right',
                frameon=True,
-               fontsize=9,
+               fontsize=8.5,
                framealpha=1,
                facecolor='w',
                edgecolor=(0, 0, 0, 1),
@@ -132,7 +180,7 @@ def plot_over_time(df_sii, df_hid):
                                                         linewidth=0.5,
                                                         markerfacecolor=colors[1],
                                                         color='k',
-                                                        marker='o',
+                                                        marker='d',
                                                         markeredgecolor='k',
                                                         legend=False,
                                                         )
@@ -142,7 +190,7 @@ def plot_over_time(df_sii, df_hid):
                                                                          linewidth=0.5,
                                                                          markerfacecolor=colors[2],
                                                                          color='k',
-                                                                         marker='o',
+                                                                         marker='s',
                                                                          markeredgecolor='k',
                                                                          legend=False,
                                                                          )
@@ -162,7 +210,7 @@ def plot_over_time(df_sii, df_hid):
                                                         linewidth=0.5,
                                                         markerfacecolor=colors[1],
                                                         color='k',
-                                                        marker='o',
+                                                        marker='d',
                                                         markeredgecolor='k',
                                                         legend=False,
                                                         )
@@ -172,7 +220,7 @@ def plot_over_time(df_sii, df_hid):
                                                                          linewidth=0.5,
                                                                          markerfacecolor=colors[2],
                                                                          color='k',
-                                                                         marker='o',
+                                                                         marker='s',
                                                                          markeredgecolor='k',
                                                                          legend=False,
                                                                          )
@@ -204,13 +252,13 @@ def plot_over_time(df_sii, df_hid):
              alpha=0.3
              )
 
-    ax1.set_title('a.', fontsize=16, loc='left')
-    ax2_twinx.set_title('b.', fontsize=16, loc='left')
-    ax3_twinx.set_title('c.', fontsize=16, loc='left')
+    ax1.set_title('a.', fontsize=20, loc='left')
+    ax2_twinx.set_title('b.', fontsize=21, loc='left')
+    ax3_twinx.set_title('c.', fontsize=21, loc='left')
 
-    ax1.set_ylabel('Slope Index of Inequality\n(Life Expectancy at Birth Differential)')
-    ax2_twinx.set_ylabel('Male Healthy LE\n(at Birth)')
-    ax3_twinx.set_ylabel('Female Healthy LE\n(at Birth)')
+    ax1.set_ylabel('Slope Index of Inequality\n(Life Expectancy at Birth Differential)', fontsize=13)
+    ax2_twinx.set_ylabel('Male Healthy LE\n(at Birth)', fontsize=13)
+    ax3_twinx.set_ylabel('Female Healthy LE\n(at Birth)', fontsize=13)
 
     for ax in [ax1, ax2, ax3]:
         ax.tick_params(axis='x',
@@ -242,13 +290,13 @@ def plot_over_time(df_sii, df_hid):
                markersize=6,
                label='Least Deprived'),
         Line2D([0], [0],
-               marker='o',
+               marker='d',
                color='w',
                markerfacecolor=colors[1],
                markeredgecolor='k',
                markersize=6, label='5th Decile'),
         Line2D([0], [0],
-               marker='o',
+               marker='s',
                color='w',
                markerfacecolor=colors[2],
                markeredgecolor='k',
@@ -265,6 +313,23 @@ def plot_over_time(df_sii, df_hid):
                      ncols=3
                      )
 
+    ax1.axvline(x=9, color='k', linestyle='--')
+    ax1.annotate('General Election\n(2010)',
+                 xy=(9.15, 7.75),
+                 xytext=(2.5, 7.75),
+                 ha='center',
+                 va='center',
+                 fontsize=10,
+                 bbox=dict(boxstyle="round,pad=0.3", edgecolor="black", facecolor="w"),
+                 arrowprops=dict(arrowstyle='->',
+                                 connectionstyle="arc3,rad=0",
+                                 color='black',
+                                 mutation_scale=20,
+                                 lw=1)
+                   )
+
+    plt.tight_layout()
+
     plt.savefig(os.path.join(os.getcwd(),
                              '..',
                              'output',
@@ -275,7 +340,6 @@ def plot_over_time(df_sii, df_hid):
                              'output',
                              'health_over_time_and_deprivation.svg'),
                 bbox_inches='tight')
-
     plt.tight_layout()
 
 
