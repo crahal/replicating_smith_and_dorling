@@ -16,6 +16,633 @@ from shapely.geometry import MultiPoint, Point
 mpl.rcParams['font.family'] = 'Helvetica'
 
 
+def make_summary_tables(df_1, df_2, year):
+    if year=='2019':
+        party_share = ['Con PC', 'Lab PC', 'Lib PC', 'Brx PC', 'Vote PC']
+    elif year=='2024':
+        party_share = ['Con PC', 'Lab PC', 'Lib PC', 'RUK PC', 'Vote PC']
+
+    crosstab_var = ['ASMR_f',
+                    'ASMR_m']
+
+    table_rho = pd.DataFrame(columns=['Year',
+                                      'N',
+                                      'Con PC',
+                                      'Lab PC',
+                                      'Lib PC'
+                                     ],
+                             index=crosstab_var)
+    table_p = pd.DataFrame(columns=party_share,
+                           index=crosstab_var)
+
+    for col in party_share:
+        for index in crosstab_var:
+            table_rho.at[index, 'Year']=year
+            table_p.at[index, 'Year']=year
+            table_rho.at[index, 'N']=len(df_1)
+            table_p.at[index, 'N']=len(df_1)
+            rho, p = pearsonr(df_1[col],
+                              df_1[index]
+                               )
+            table_rho.loc[index, col] = rho
+            table_p.loc[index, col] = p
+
+    crosstab_var = ['ProportionBadHealth',
+                    'ProportionDisabled']
+    for col in party_share:
+            for index in crosstab_var:
+                table_rho.at[index, 'Year']=year
+                table_p.at[index, 'Year']=year
+                table_rho.at[index, 'N']=len(df_2)
+                table_p.at[index, 'N']=len(df_2)
+                rho, p = pearsonr(df_2[col],
+                                   df_2[index]
+                                   )
+                table_rho.loc[index, col] = rho
+                table_p.loc[index, col] = p
+    return table_rho, table_p
+
+
+def make_merged_2024():
+    df_2024 = pd.read_excel(os.path.join('..',
+                                         'data',
+                                         'raw',
+                                         'voting',
+                                         'HoC-GE' + str(2024) + '-results-by-constituency.xlsx'),
+                            sheet_name='Data'
+                            )
+    lookup = pd.read_excel(os.path.join('..',
+                                        'data',
+                                        'raw',
+                                        'lookup',
+                                        'Boundary_changes_data_file.xlsx'),
+                           sheet_name='data'
+                           )
+    mortality_fname = 'prematuredeathsandagestandardisedmortalityratesbyparlimentaryconsituencyandsexin2021.xlsx'
+    df_mortality_m = pd.read_excel(os.path.join('..',
+                                                'data',
+                                                'raw',
+                                                'mortality',
+                                                mortality_fname),
+                                   sheet_name='1',
+                                   skiprows=4
+                                   )
+
+    df_mortality_f = pd.read_excel(os.path.join('..',
+                                                'data',
+                                                'raw',
+                                                'mortality',
+                                                mortality_fname),
+                                   sheet_name='2',
+                                   skiprows=4
+                                   )
+    df_mortality_m = df_mortality_m.rename({'ASMR': 'ASMR_m'},
+                                           axis=1)
+    df_mortality_f = df_mortality_f.rename({'ASMR': 'ASMR_f'},
+                                           axis=1)
+    asmr = pd.merge(df_mortality_m, df_mortality_f,
+                    how='left',
+                    right_on='Parliamentary Constituency ',
+                    left_on='Parliamentary Constituency ')
+    asmr = asmr[['Parliamentary Constituency ',
+                 'ASMR_f',
+                 'ASMR_m']]
+    df_2024 = df_2024[df_2024['Country name'] == 'England']
+    lookup['new_constituency'] = lookup['new_constituency'].str.title().str.strip()
+    lookup['old_constituency'] = lookup['old_constituency'].str.title().str.strip()
+    df_2024['Constituency name'] = df_2024['Constituency name'].str.title().str.strip()
+    lookup = lookup[lookup['old_constituency_code'].str.startswith('E')]
+    print('Number of new constituencies in lookup file: ',
+          len(lookup['new_constituency'].unique()))
+    print('Number of old constituencies in lookup file: ',
+          len(lookup['old_constituency'].unique()))
+    all_2024 = df_2024
+    df_m = pd.merge(df_2024, lookup, how='left',
+                    left_on='Constituency name',
+                    right_on='new_constituency')
+    df_m = pd.merge(df_m, asmr, how='left',
+                    left_on='old_constituency_code',
+                    right_on='Parliamentary Constituency ')
+    df_m = df_m.drop_duplicates(subset=['Constituency name'])
+    df_m['ConstituencyName'] = df_m['Constituency name']
+    df_m = df_m[df_m['ASMR_f'].notnull()]
+    df_m['Con PC'] = df_m['Con']/df_m['Valid votes']
+    df_m['Lab PC'] = df_m['Lab']/df_m['Valid votes']
+    df_m['Lib PC'] = df_m['LD'] / df_m['Valid votes']
+    df_m['RUK PC'] = df_m['RUK'] / df_m['Valid votes']
+    df_m['Vote PC'] = (df_m['Valid votes']+df_m['Invalid votes'])/df_m['Electorate']
+    df_m['first_party_3'] = np.where((df_m['First party']=='Lab') |
+                                          (df_m['First party']=='Con'),
+                                           df_m['First party'],
+                                          'Other')
+    not_in_merged = all_2024[~all_2024['Constituency name'].isin(df_m['Constituency name'])]
+    not_in_merged_path = os.path.join(os.getcwd(),
+                                      '..',
+                                      'data',
+                                      'derived',
+                                      'check_those_not_in_lookup.csv')
+    not_in_merged.to_csv(not_in_merged_path)
+    print('The length of our final 2024 dataframe is:', len(df_m))
+    print('The ' + str(len(not_in_merged)) + ' which get dropped saved to:\n'
+          './data/derived/check_those_not_in_lookup.csv')
+    return df_m
+
+
+def plot_bivariate_choropleth_map_census(df_gpd_2019, df_gpd_2024, party_list):
+    df_gpd_2019 = df_gpd_2019[df_gpd_2019['Country name'] == 'England'].copy()
+    df_gpd_2024 = df_gpd_2024[df_gpd_2024['Country name'] == 'England'].copy()
+    print('Length of the 2019 dataset going into this: ', len(df_gpd_2019))
+    print('Length of the 2024 dataset going into this: ', len(df_gpd_2024))
+
+    percentile_limits = [0.2, 0.4, 0.6, 0.8, 1.0]
+    plotter = BivariateChoroplethPlotter(percentile_limits)
+    fig, axs = plt.subplots(2, 2, figsize=(20, 24))  # Creating two subplots side by side
+    df_gpd_2019 = df_gpd_2019[(df_gpd_2019[party_list[0] + ' PC'].notnull()) &
+                              (df_gpd_2019['ProportionBadHealth'].notnull()) &
+                              (df_gpd_2019['ProportionDisabled'].notnull())]
+    df_gpd_2024 = df_gpd_2024[(df_gpd_2024[party_list[0] + ' PC'].notnull()) &
+                              (df_gpd_2024['ProportionBadHealth'].notnull()) &
+                              (df_gpd_2024['ProportionDisabled'].notnull())]
+
+    df_gpd_2019['column1'] = df_gpd_2019[party_list[0] + ' PC'].rank(ascending=True)/len(df_gpd_2019)
+    df_gpd_2019['column2'] = df_gpd_2019['ProportionBadHealth'].rank(ascending=True)/len(df_gpd_2019)
+    df_gpd_2019['column3'] = df_gpd_2019['ProportionDisabled'].rank(ascending=True)/len(df_gpd_2019)
+
+    df_gpd_2019['column1'] = df_gpd_2019['column1'].clip(upper=1.0)
+    df_gpd_2019['column2'] = df_gpd_2019['column2'].clip(upper=1.0)
+    df_gpd_2019['column3'] = df_gpd_2019['column3'].clip(upper=1.0)
+
+    df_gpd_2024['column1'] = df_gpd_2024[party_list[0] + ' PC'].rank(ascending=True)/len(df_gpd_2024)
+    df_gpd_2024['column2'] = df_gpd_2024['ProportionBadHealth'].rank(ascending=True)/len(df_gpd_2024)
+    df_gpd_2024['column3'] = df_gpd_2024['ProportionDisabled'].rank(ascending=True)/len(df_gpd_2024)
+
+    df_gpd_2024['column1'] = df_gpd_2024['column1'].clip(upper=1.0)
+    df_gpd_2024['column2'] = df_gpd_2024['column2'].clip(upper=1.0)
+    df_gpd_2024['column3'] = df_gpd_2024['column3'].clip(upper=1.0)
+
+    df_gpd_2019.to_csv(os.path.join(os.getcwd(), '..', 'data', 'derived', party_list[0]+'_ranked_data_2019.csv'))
+    df_gpd_2024.to_csv(os.path.join(os.getcwd(), '..', 'data', 'derived', party_list[0]+'_ranked_data_2024.csv'))
+
+    plotter.plot_bivariate_choropleth(df_gpd_2019, ax=axs[0, 0])
+    plotter.plot_inset_legend(axs[0, 0], 'Proportion Bad\nHealth (2019)',
+                              party_list[1] + ' Vote Percentile\n(2019)')
+    axs[0, 0].set_xlim(125000, 660000)
+    axs[0, 0].set_ylim(10000, 675000)
+    axs[0, 0].set_title('a.', fontsize=35, loc='left', y=0.965, x=.0)
+    sns.despine(ax=axs[0, 0], left=True, right=True, top=True, bottom=True)
+    axs[0, 0].annotate('N', xy=(0.8, 0.95), xytext=(0.8, 0.95 - .125),
+                       arrowprops=dict(facecolor='black',
+                                       width=2.5,
+                                       headwidth=15),
+                       ha='center', va='center', fontsize=20,
+                       xycoords=axs[0, 0].transAxes)
+
+    df_gpd_2019['column2'] = df_gpd_2019['column3']
+    plotter.plot_bivariate_choropleth(df_gpd_2019, ax=axs[1, 0])
+    plotter.plot_inset_legend(axs[1, 0], 'Proportion\nDisabiled (2019)',
+                              party_list[1] + ' Vote Percentile\n(2019)')
+    axs[1, 0].set_xlim(125000, 660000)
+    axs[1, 0].set_ylim(10000, 675000)
+    axs[1, 0].set_title('c.', fontsize=35, loc='left', y=0.965, x=.0)
+    sns.despine(ax=axs[1, 0], left=True, right=True, top=True, bottom=True)
+    axs[1, 0].annotate('N', xy=(0.8, 0.95), xytext=(0.8, 0.95 - .125),
+                       arrowprops=dict(facecolor='black', width=2.5, headwidth=15),
+                       ha='center', va='center', fontsize=20,
+                       xycoords=axs[1, 0].transAxes)
+
+    plotter.plot_bivariate_choropleth(df_gpd_2024, ax=axs[0, 1])
+    plotter.plot_inset_legend(axs[0, 1], 'Proportion Bad\nHealth (2024)', party_list[1] + ' Vote Percentile\n(2024)')
+    axs[0, 1].set_xlim(125000, 660000)
+    axs[0, 1].set_ylim(10000, 675000)
+    axs[0, 1].set_title('b.', fontsize=35, loc='left', y=0.965, x=.0)
+    sns.despine(ax=axs[0, 1], left=True, right=True, top=True, bottom=True)
+    axs[0, 1].annotate('N', xy=(0.8, 0.95), xytext=(0.8, 0.95 - .125),
+                       arrowprops=dict(facecolor='black',
+                                       width=2.5,
+                                       headwidth=15),
+                       ha='center', va='center', fontsize=20,
+                       xycoords=axs[0, 1].transAxes)
+
+    df_gpd_2024['column2'] = df_gpd_2024['column3']
+    plotter.plot_bivariate_choropleth(df_gpd_2024, ax=axs[1, 1])
+    plotter.plot_inset_legend(axs[1, 1], 'Proportion\nDisabled (2024)', party_list[1] + ' Vote Percentile\n(2024)')
+    axs[1, 1].set_xlim(125000, 660000)
+    axs[1, 1].set_ylim(10000, 675000)
+    axs[1, 1].set_title('d.', fontsize=35, loc='left', y=0.965, x=.0)
+    sns.despine(ax=axs[1, 1], left=True, right=True, top=True, bottom=True)
+    axs[1, 1].annotate('N', xy=(0.8, 0.95), xytext=(0.8, 0.95 - .125),
+                       arrowprops=dict(facecolor='black', width=2.5, headwidth=15),
+                       ha='center', va='center', fontsize=20,
+                       xycoords=axs[1, 1].transAxes)
+    starmer = df_gpd_2024[df_gpd_2024['PCON24NM'].str.contains('Pancras',
+                                                               regex=False)]
+    sunak = df_gpd_2024[df_gpd_2024['PCON24NM'].str.contains('Richmond and Northallerton',
+                                                             regex=False)]
+    speaker = df_gpd_2024[df_gpd_2024['PCON24NM'].str.contains('Chorley',
+                                                               regex=False)]
+    corbyn = df_gpd_2019[df_gpd_2019['Constituency name'].str.contains('Islington North',
+                                                                       regex=False)]
+    johnson = df_gpd_2019[df_gpd_2019['Constituency name'].str.contains('Uxbridge',
+                                                                        regex=False)]
+    for ax in [axs[0, 1], axs[1, 1]]:
+        convex_hull = sunak['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Richmond and\nNorthallerton\n(Rishi Sunak)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x - 200000, center.y),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=-.30",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+        convex_hull = starmer['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1.3)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Holborn and\nSt Pancras\n(Keir Starmer)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x, center.y - 140000),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=-.45",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+        convex_hull = speaker['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1.2)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Chorley\n(Speaker)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x - 135000, center.y),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=.45",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+
+    for ax in [axs[0, 0], axs[1, 0]]:
+        convex_hull = johnson['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Uxbridge and\nSouth Ruislip\n(Boris Johnson)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x + 120000, center.y + 200000),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=-.225",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+        convex_hull = corbyn['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1.3)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Islington North\n(Jeremy Corbyn)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x, center.y - 140000),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=.45",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+        convex_hull = speaker['geometry'].convex_hull
+        center, radius = minimum_bounding_circle(convex_hull.iloc[0])
+        circle = Point(center).buffer(radius * 1.2)
+        gpd.GeoSeries([circle]).plot(color=(1, 1, 1, 0.2),
+                                     ax=ax,
+                                     edgecolor=(0, 0, 0, 1),
+                                     linewidth=1.5
+                                     )
+        ax.annotate('Chorley\n(Speaker)',
+                    xy=(center.x, center.y),
+                    xytext=(center.x - 135000, center.y),
+                    ha='center',
+                    va='center',
+                    fontsize=16,
+                    arrowprops=dict(arrowstyle='->',
+                                    connectionstyle="arc3,rad=-.45",
+                                    color='black',
+                                    mutation_scale=30,
+                                    lw=1.5)
+                    )
+
+    plt.subplots_adjust(wspace=0.2)
+    plt.subplots_adjust(hspace=0.0)
+    plt.savefig(os.path.join(os.getcwd(),
+                             '..',
+                             'output',
+                             party_list[0]+'_census_health_and_disability_by_constituency_bivariate_choropleth.pdf'),
+                bbox_inches='tight')
+    plt.savefig(os.path.join(os.getcwd(),
+                             '..',
+                             'output',
+                             party_list[0]+'_census_health_and_disability_by_constituency_bivariate_choropleth.svg'),
+                bbox_inches='tight')
+
+
+def make_df_gpd_census(year):
+    if year == 2019:
+        df_2019 = pd.read_excel(os.path.join('..', 'data', 'raw', 'voting',
+                                             'HoC-GE' + str(year) + '-results-by-constituency.xlsx'),
+                                sheet_name='Data'
+                                )
+        border = gpd.read_file(os.path.join(os.getcwd(),
+                                            '..',
+                                            'data',
+                                            'shapefile',
+                                            '2019',
+                                            'WPC_Dec_2019_GCB_UK.shp')
+                               )
+        health = pd.read_csv(os.path.join(os.getcwd(),
+                                            '..',
+                                            'data',
+                                            'raw',
+                                            'census',
+                                            '2019_health.csv')
+                               )
+
+
+
+        df_health = (
+            health.loc[health["General health (3 categories)"] == "Not good health"]
+            .groupby("Westminster Parliamentary constituencies Code")["Observation"]
+            .sum()
+        )
+        df_total = (
+            health.loc[health["General health (3 categories)"].isin(["Not good health",
+                                                                     "Good health"])]
+            .groupby("Westminster Parliamentary constituencies Code")["Observation"]
+            .sum()
+        )
+        df_prop = (df_health / df_total).rename("ProportionBadHealth")
+        health = df_prop.reset_index()
+
+
+
+        disability = pd.read_excel(os.path.join(os.getcwd(),
+                                                '..',
+                                                'data',
+                                                'raw',
+                                                'census',
+                                                '2019_disability.xlsx')
+                                   )
+
+        df_disabled = (
+            disability.loc[disability["Disability (3 categories)"] == "Disabled under the Equality Act"]
+            .groupby("Westminster Parliamentary constituencies Code")["Observation"]
+            .sum()
+        )
+        df_total = (
+            disability.loc[disability["Disability (3 categories)"].isin(["Disabled under the Equality Act",
+                                                                         "Not disabled under the Equality Act"])]
+            .groupby("Westminster Parliamentary constituencies Code")["Observation"]
+            .sum()
+        )
+        df_prop = (df_disabled / df_total).rename("ProportionDisabled")
+        disabled = df_prop.reset_index()
+
+        df_gpd = pd.merge(border,
+                          df_2019,
+                          how='left',
+                          left_on='pcon19cd',
+                          right_on='ONS ID'
+                          )
+        df_gpd = pd.merge(df_gpd,
+                          health,
+                          how='left',
+                          left_on='pcon19cd',
+                          right_on='Westminster Parliamentary constituencies Code'
+                          )
+        df_gpd = pd.merge(df_gpd,
+                          disabled,
+                          how='left',
+                          left_on='Westminster Parliamentary constituencies Code',
+                          right_on='Westminster Parliamentary constituencies Code'
+                          )
+
+    elif year == 2024:
+        df_2024 = pd.read_excel(os.path.join('..', 'data', 'raw', 'voting',
+                                             'HoC-GE' + str(year) + '-results-by-constituency.xlsx'),
+                                sheet_name='Data'
+                                )
+        border = gpd.read_file(os.path.join(os.getcwd(),
+                                            '..',
+                                            'data',
+                                            'shapefile',
+                                            '2024',
+                                            'PCON_JULY_2024_UK_BFC.shp')
+                               )
+        health = pd.read_csv(os.path.join(os.getcwd(),
+                                            '..',
+                                            'data',
+                                            'raw',
+                                            'census',
+                                            '2024_health.csv')
+                               )
+
+
+
+        df_health = (
+            health.loc[health["General health (3 categories)"] == "Not good health"]
+            .groupby("Post-2019 Westminster Parliamentary constituencies")["Observation"]
+            .sum()
+        )
+        df_total = (
+            health.loc[health["General health (3 categories)"].isin(["Not good health",
+                                                                     "Good health"])]
+            .groupby("Post-2019 Westminster Parliamentary constituencies")["Observation"]
+            .sum()
+        )
+        df_prop = (df_health / df_total).rename("ProportionBadHealth")
+        health = df_prop.reset_index()
+
+        disability = pd.read_excel(os.path.join(os.getcwd(),
+                                                '..',
+                                                'data',
+                                                'raw',
+                                                'census',
+                                                '2024_disability.xlsx')
+                                   )
+
+        df_disabled = (
+            disability.loc[disability["Disability (3 categories)"] == "Disabled under the Equality Act"]
+            .groupby("Post-2019 Westminster Parliamentary constituencies")["Observation"]
+            .sum()
+        )
+        df_total = (
+            disability.loc[disability["Disability (3 categories)"].isin(["Disabled under the Equality Act",
+                                                                         "Not disabled under the Equality Act"])]
+            .groupby("Post-2019 Westminster Parliamentary constituencies")["Observation"]
+            .sum()
+        )
+        df_prop = (df_disabled / df_total).rename("ProportionDisabled")
+        disabled = df_prop.reset_index()
+        df_gpd = pd.merge(border,
+                          df_2024,
+                          how='left',
+                          left_on='PCON24NM',
+                          right_on='Constituency name'
+                          )
+        df_gpd = pd.merge(df_gpd,
+                          health,
+                          how='left',
+                          left_on='Constituency name',
+                          right_on='Post-2019 Westminster Parliamentary constituencies'
+                          )
+        df_gpd = pd.merge(df_gpd,
+                          disabled,
+                          how='left',
+                          left_on='Post-2019 Westminster Parliamentary constituencies',
+                          right_on='Post-2019 Westminster Parliamentary constituencies'
+                          )
+    df_gpd = gpd.GeoDataFrame(df_gpd)
+    df_gpd = df_gpd.set_geometry("geometry")
+
+    df_gpd['Con PC'] = df_gpd['Con'] / df_gpd['Valid votes']
+    df_gpd['Lab PC'] = df_gpd['Lab'] / df_gpd['Valid votes']
+    df_gpd['Lib PC'] = df_gpd['LD'] / df_gpd['Valid votes']
+    df_gpd['Vote PC'] = (df_gpd['Valid votes']+df_gpd['Invalid votes'])/df_gpd['Electorate']
+    if year == 2019:
+        df_gpd['Brx PC'] = df_gpd['BRX'] / df_gpd['Valid votes']
+    else:
+        df_gpd['RUK PC'] = df_gpd['RUK'] / df_gpd['Valid votes']
+    df_gpd = gpd.GeoDataFrame(df_gpd)
+    df_gpd = df_gpd.set_geometry("geometry")
+    return df_gpd  # [df_gpd['ONSConstID'].notnull()]
+
+
+
+def print_mean_ASMRs(df_2019, df_2024):
+    lab_mean_ASMR_m_2019 = df_2019[df_2019['first_party_3'] == 'Lab']['ASMR_m'].mean()
+    print('Labour mean ASMR for men in 2019: ', np.round(lab_mean_ASMR_m_2019, 3))
+    con_mean_ASMR_m_2019 = df_2019[df_2019['first_party_3'] == 'Con']['ASMR_m'].mean()
+    print('Conservative mean ASMR for men in 2019: ', np.round(con_mean_ASMR_m_2019, 3))
+    oth_mean_ASMR_m_2019 = df_2019[df_2019['first_party_3'] == 'Other']['ASMR_m'].mean()
+    print('Other party mean ASMR for men in 2019: ', np.round(oth_mean_ASMR_m_2019, 3))
+
+    lab_mean_ASMR_f_2019 = df_2019[df_2019['first_party_3'] == 'Lab']['ASMR_f'].mean()
+    print('Labour mean ASMR for women in 2019: ', np.round(lab_mean_ASMR_f_2019, 3))
+    con_mean_ASMR_f_2019 = df_2019[df_2019['first_party_3'] == 'Con']['ASMR_f'].mean()
+    print('Conservative mean ASMR for women in 2019: ', np.round(con_mean_ASMR_f_2019, 3))
+    oth_mean_ASMR_f_2019 = df_2019[df_2019['first_party_3'] == 'Other']['ASMR_f'].mean()
+    print('Other party mean ASMR for women in 2019: ', np.round(oth_mean_ASMR_f_2019, 3))
+
+    lab_mean_ASMR_m_2024 = df_2024[df_2024['first_party_3'] == 'Lab']['ASMR_m'].mean()
+    print('Labour mean ASMR for men in 2024: ', np.round(lab_mean_ASMR_m_2024, 3))
+    con_mean_ASMR_m_2024 = df_2024[df_2024['first_party_3'] == 'Con']['ASMR_m'].mean()
+    print('Conservative mean ASMR for men in 2024: ', np.round(con_mean_ASMR_m_2024, 3))
+    oth_mean_ASMR_m_2024 = df_2024[df_2024['first_party_3'] == 'Other']['ASMR_m'].mean()
+    print('Other party mean ASMR for men in 2024: ', np.round(oth_mean_ASMR_m_2024, 3))
+
+    lab_mean_ASMR_f_2024 = df_2024[df_2024['first_party_3'] == 'Lab']['ASMR_f'].mean()
+    print('Labour mean ASMR for women in 2024: ', np.round(lab_mean_ASMR_f_2024, 3))
+    con_mean_ASMR_f_2024 = df_2024[df_2024['first_party_3'] == 'Con']['ASMR_f'].mean()
+    print('Conservative mean ASMR for women in 2024: ', np.round(con_mean_ASMR_f_2024, 3))
+    oth_mean_ASMR_f_2024 = df_2024[df_2024['first_party_3'] == 'Other']['ASMR_f'].mean()
+    print('Other party mean ASMR for women in 2024: ', np.round(oth_mean_ASMR_f_2024, 3))
+
+
+def check_constituency_numbers():
+    import pandas as pd
+    import os
+    df_voting_2019 = pd.read_excel(os.path.join('..', 'data', 'raw', 'voting',
+                                                'HoC-GE2019-results-by-constituency.xlsx'),
+                                   sheet_name='Data')
+    df_voting_2024 = pd.read_excel(os.path.join('..', 'data', 'raw', 'voting',
+                                                'HoC-GE2024-results-by-constituency.xlsx'),
+                                   sheet_name='Data')
+    df_voting_2019 = df_voting_2019[df_voting_2019['Country name'] == 'England']
+    df_voting_2024 = df_voting_2024[df_voting_2024['Country name'] == 'England']
+    print('Number of raw constituencies in England 2019:', len(df_voting_2019))
+    print('Number of raw constituencies in England 2024:', len(df_voting_2024))
+    df_voting_2019['Constituency name'] = df_voting_2019['Constituency name'].str.title().str.strip()
+    df_voting_2019['Constituency name'] = df_voting_2019['Constituency name'].str.replace(r'[^a-zA-Z\s]', '',
+                                                                                          regex=True)
+    df_voting_2024['Constituency name'] = df_voting_2024['Constituency name'].str.title().str.strip()
+    df_voting_2024['Constituency name'] = df_voting_2024['Constituency name'].str.replace(r'[^a-zA-Z\s]', '',
+                                                                                          regex=True)
+    length = len(df_voting_2019[df_voting_2019['Constituency name'].isin(df_voting_2024['Constituency name'])])
+    print('#2019 constituencies in 2024 df after stripping/titlecasing/removing non-ascii:', length)
+
+    mortality_fname = 'prematuredeathsandagestandardisedmortalityratesbyparlimentaryconsituencyandsexin2021.xlsx'
+    df_mortality_m = pd.read_excel(os.path.join('..', 'data', 'raw', 'mortality',
+                                                mortality_fname),
+                                   sheet_name='1', skiprows=4
+                                   )
+
+    df_mortality_f = pd.read_excel(os.path.join('..', 'data', 'raw', 'mortality',
+                                                mortality_fname),
+                                   sheet_name='2', skiprows=4
+                                   )
+
+    df_mortality_m = df_mortality_m.rename({'ASMR': 'ASMR_m'},
+                                           axis=1)
+    df_mortality_f = df_mortality_f.rename({'ASMR': 'ASMR_f'},
+                                           axis=1)
+    asmr = pd.merge(df_mortality_m, df_mortality_f,
+                    how='left',
+                    right_on='Parliamentary Constituency ',
+                    left_on='Parliamentary Constituency ')
+    asmr = asmr[['Parliamentary Constituency ',
+                 'ASMR_f',
+                 'ASMR_m']]
+    df_deprivation = pd.read_excel(os.path.join('..', 'data', 'raw', 'deprivation',
+                                                'deprivation-dashboard.xlsx'),
+                                   sheet_name='Data constituencies',
+                                   usecols=['ONSConstID', 'ConstituencyName']
+                                   )
+    asmr = pd.merge(asmr, df_deprivation, how='left',
+                    left_on='Parliamentary Constituency ', right_on='ONSConstID')
+    asmr['ConstituencyName'] = asmr['ConstituencyName'].str.title().str.strip()
+    asmr['ConstituencyName'] = asmr['ConstituencyName'].str.replace(r'[^a-zA-Z\s]', '',
+                                                                    regex=True)
+    length = len(df_voting_2024[df_voting_2024['Constituency name'].isin(asmr['ConstituencyName'])])
+    print('#2024 constituencies in asmr df after stripping/titlecasing/removing non-ascii:', length)
+
+
+
 def make_summary_tables(df_gpd):
     party_share = ['Con PC', 'Lab PC', 'Lib PC', 'Brx PC']
     crosstab_var = ['ASMR_f',
@@ -447,7 +1074,7 @@ class BivariateChoroplethPlotter:
         ax.set_yticks([])
         return fig, ax
 
-    def plot_inset_legend(self, ax, yaxis_label):
+    def plot_inset_legend(self, ax, yaxis_label, xaxis_label):
         ax_inset = ax.inset_axes([0.0125, 0.275, 0.3, 0.3])
         ax_inset.set_aspect('equal', adjustable='box')
         x_ticks = [0]
@@ -469,10 +1096,11 @@ class BivariateChoroplethPlotter:
         ax_inset.set_ylim([0, len(self.percentile_limits)])
         ax_inset.set_xticks(list(range(len(self.percentile_limits) + 1)),
                             x_ticks, fontsize=15)
-        ax_inset.set_xlabel('Labour Vote Percentile\n(2019)', fontsize=16)
+        ax_inset.set_xlabel(xaxis_label, fontsize=16)
         ax_inset.set_yticks(list(range(len(self.percentile_limits) + 1)),
                             y_ticks, fontsize=15)
         ax_inset.set_ylabel(yaxis_label, fontsize=16)
+
 
 def plot_bivariate_choropleth_map(geometry):
     percentile_limits = [0.2, 0.4, 0.6, 0.8, 1.0]
@@ -610,6 +1238,7 @@ def make_df_gpd(df_m):
                                         '..',
                                         'data',
                                         'shapefile',
+                                        '2019',
                                         'WPC_Dec_2019_GCB_UK.shp')
                                         )
     df_gpd = pd.merge(df_m,
@@ -623,139 +1252,249 @@ def make_df_gpd(df_m):
     return df_gpd
 
 
-def plot_scatters(df_m):
-    gs = (grid_spec.GridSpec(1,2))
-    fig = plt.figure(figsize=(12, 6))
+def plot_scatters(df_2019, df_2024,
+                  config_list):
+    gs = (grid_spec.GridSpec(2, 2))
+    fig = plt.figure(figsize=(12, 10))
     ax1 = fig.add_subplot(gs[0, 0])
     ax2 = fig.add_subplot(gs[0, 1])
-    df_m = df_m.copy()
+    ax3 = fig.add_subplot(gs[1, 0])
+    ax4 = fig.add_subplot(gs[1, 1])
+    df_2019 = df_2019.copy()
+    df_2024 = df_2024.copy()
 
+    df_2019 = df_2019[df_2019['ASMR_f'].notnull()]
+    df_2024 = df_2024[df_2024['ASMR_f'].notnull()]
+    print('The length of the 2019 data going into the scatters is: ', len(df_2019))
+    print('The length of the 2024 data going into the scatters is: ', len(df_2024))
+    df_2019.to_csv('2019_test.csv')
+    df_2019.to_csv('2024_test.csv')
     color_mapping = {
         'Lab': '#E4003B',
         'Con': '#0087DC',
         'Other': 'lightgrey'
     }
 
-    df_m.loc[:, 'color'] = df_m['first_party_3'].map(color_mapping)
+    df_2019.loc[:, 'color'] = df_2019['first_party_3'].map(color_mapping)
+    df_2024.loc[:, 'color'] = df_2024['first_party_3'].map(color_mapping)
 
-    ax1.scatter(df_m['Lab PC'],
-                df_m['ASMR_f'],
-                color=df_m['color'],
+    ax1.scatter(df_2019[config_list[0]],
+                df_2019['ASMR_f'],
+                color=df_2019['color'],
                 edgecolor='k'
-               )
-    ax2.scatter(df_m['Lab PC'],
-                df_m['ASMR_m'],
-                color=df_m['color'],
+                )
+    ax2.scatter(df_2019[config_list[0]],
+                df_2019['ASMR_m'],
+                color=df_2019['color'],
                 edgecolor='k'
-               )
+                )
+    ax3.scatter(df_2024[config_list[0]],
+                df_2024['ASMR_f'],
+                color=df_2024['color'],
+                edgecolor='k'
+                )
+    ax4.scatter(df_2024[config_list[0]],
+                df_2024['ASMR_m'],
+                color=df_2024['color'],
+                edgecolor='k'
+                )
 
+    for ax in [ax1, ax2, ax3, ax4]:
+        ax.set_xlabel(config_list[1] + ' Vote Share', fontsize=14)
 
-    ax1.set_xlabel('Labour Vote Share', fontsize=14)
-    ax2.set_xlabel('Labour Vote Share', fontsize=14)
     ax1.set_ylabel('ASMR (Female)', fontsize=14)
     ax2.set_ylabel('ASMR (Male)', fontsize=14)
+    ax3.set_ylabel('ASMR (Female)', fontsize=14)
+    ax4.set_ylabel('ASMR (Male)', fontsize=14)
 
     legend_elements2 = [
-        Patch(facecolor=color_mapping['Con'], edgecolor=(0,0,0,1),
+        Patch(facecolor=color_mapping['Con'], edgecolor=(0, 0, 0, 1),
               label=r'Conservative'),
-        Patch(facecolor=color_mapping['Lab'], edgecolor=(0,0,0,1),
+        Patch(facecolor=color_mapping['Lab'], edgecolor=(0, 0, 0, 1),
               label=r'Labour'),
-        Patch(facecolor=color_mapping['Other'], edgecolor=(0,0,0,1),
+        Patch(facecolor=color_mapping['Other'], edgecolor=(0, 0, 0, 1),
               label=r'Other'),
     ]
-    legend = ax1.legend(handles=legend_elements2,
-                        loc='upper left',
-                        frameon=True,
-                        fontsize=10,
-                        framealpha=1,
-                        facecolor='w',
-                        edgecolor=(0, 0, 0, 1),
-                        ncols=1
-                       )
+    if config_list[0]=="Lab PC":
+        leg_pos = 'upper left'
+    else:
+        leg_pos = 'upper right'
+    ax1.legend(handles=legend_elements2,
+               loc=leg_pos,
+               frameon=True,
+               fontsize=10,
+               framealpha=1,
+               facecolor='w',
+               edgecolor=(0, 0, 0, 1),
+               ncols=1
+               )
 
-    for ax, title in zip([ax1, ax2], ['a.', 'b.',]):
+    for ax, title in zip([ax1, ax2, ax3, ax4], ['a.', 'b.', 'c.', 'd.']):
         ax.grid(which="both", linestyle='--', alpha=0.3)
         ax.set_title(title, loc='left', fontsize=20, y=1.0)
 
-    lab_asmr_f_r, lab_asmr_f_p  = pearsonr(df_m['Lab PC'], df_m['ASMR_f'])
-    lab_asmr_f_r = np.round(lab_asmr_f_r, 4)
+    lab_asmr_f_r_2019, lab_asmr_f_p_2019 = pearsonr(df_2019[config_list[0]], df_2019['ASMR_f'])
+    lab_asmr_f_r_2019 = np.round(lab_asmr_f_r_2019, 4)
 
+    lab_asmr_f_r_2024, lab_asmr_f_p_2024 = pearsonr(df_2024[config_list[0]], df_2024['ASMR_f'])
+    lab_asmr_f_r_2024 = np.round(lab_asmr_f_r_2024, 4)
+
+    if config_list[0]=='Lab PC':
+        annotate_pos = 'lower right'
+    else:
+        annotate_pos = 'lower left'
     at = AnchoredText(
-        r"$r$ = " + str(lab_asmr_f_r), prop=dict(size=13),
-        frameon=True, loc='lower right')
+        r"$r$ = " + str(lab_asmr_f_r_2019), prop=dict(size=13),
+        frameon=True, loc=annotate_pos)
     at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
     ax1.add_artist(at)
-    print(f'Labour vote share vs ASMR (F) pearsons r: {lab_asmr_f_r}, p-value {lab_asmr_f_p}')
+    print(f'2019: {config_list[1]} Labour vote share vs ASMR (F) pearsons r: {lab_asmr_f_r_2019}, p-value {lab_asmr_f_p_2019}')
 
-    lab_asmr_m_r, lab_asmr_m_p = pearsonr(df_m['Lab PC'], df_m['ASMR_m'])
-    lab_asmr_m_r = np.round(lab_asmr_m_r, 3)
     at = AnchoredText(
-        r"$r$ = " + str(lab_asmr_m_r), prop=dict(size=13),
-        frameon=True, loc='lower right')
+        r"$r$ = " + str(lab_asmr_f_r_2024), prop=dict(size=13),
+        frameon=True, loc=annotate_pos)
+    at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+    ax3.add_artist(at)
+    print(f'2024: {config_list[1]} vote share vs ASMR (F) pearsons r: {lab_asmr_f_r_2024}, p-value {lab_asmr_f_p_2024}')
+
+    lab_asmr_m_r_2019, lab_asmr_m_p_2019 = pearsonr(df_2019[config_list[0]], df_2019['ASMR_m'])
+    lab_asmr_m_r_2019 = np.round(lab_asmr_m_r_2019, 3)
+    at = AnchoredText(
+        r"$r$ = " + str(lab_asmr_m_r_2019), prop=dict(size=13),
+        frameon=True, loc=annotate_pos)
     at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
     ax2.add_artist(at)
-    print(f'Labour vote share vs ASMR (M) pearsons r: {lab_asmr_m_r}, p-value {lab_asmr_m_p}')
+    print(f'2019: {config_list[1]} vote share vs ASMR (M) pearsons r: {lab_asmr_m_r_2019}, p-value {lab_asmr_m_p_2019}')
 
-    starmer = df_m[df_m['ConstituencyName'].str.contains('Pancras',
-                                                       regex=False)]
-    sunak = df_m[df_m['ConstituencyName'].str.contains('Richmond (Yorks)',
-                                                       regex=False)]
-    sunak = sunak[['Lab PC', 'ASMR_f', 'ASMR_m', 'Health deprivation and disability', 'IMD rank 2019']]
-    starmer = starmer[['Lab PC', 'ASMR_f', 'ASMR_m', 'Health deprivation and disability', 'IMD rank 2019']]
+    lab_asmr_m_r_2024, lab_asmr_m_p_2024 = pearsonr(df_2024['Lab PC'], df_2024['ASMR_m'])
+    lab_asmr_m_r_2024 = np.round(lab_asmr_m_r_2024, 3)
+    at = AnchoredText(
+        r"$r$ = " + str(lab_asmr_m_r_2024), prop=dict(size=13),
+        frameon=True, loc=annotate_pos)
+    at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+    ax4.add_artist(at)
+    print(f'2024: {config_list[1]} vote share vs ASMR (M) pearsons r: {lab_asmr_m_r_2024}, p-value {lab_asmr_m_p_2024}')
+    if config_list[2] is True:
+        corbyn = df_2019[df_2019['ConstituencyName'].str.contains('Islington', regex=False)]
+        johnson = df_2019[df_2019['ConstituencyName'].str.contains('Uxbridge', regex=False)]
+        johnson = johnson[['Lab PC', 'ASMR_f', 'ASMR_m']]
+        corbyn = corbyn[['Lab PC', 'ASMR_f', 'ASMR_m']]
 
-    ax1.annotate('Richmond\n(Yorks)',
-                 xy=(sunak['Lab PC'].iloc[0], sunak['ASMR_f'].iloc[0]),
-                 xytext=(sunak['Lab PC'].iloc[0], sunak['ASMR_f'].iloc[0] + 230),
-                 ha='center',
-                 va='bottom',
-                 arrowprops=dict(arrowstyle='->',
-                                 connectionstyle="arc3,rad=.45",
-                                 color='black',
-                                 mutation_scale=30,
-                                 lw=1.5)
-                )
-    ax1.annotate('Holborn and\nSt Pancras',
-                 xy=(starmer['Lab PC'].iloc[0], starmer['ASMR_f'].iloc[0]),
-                 xytext=(starmer['Lab PC'].iloc[0], starmer['ASMR_f'].iloc[0] + 255),
-                 ha='center',
-                 va='bottom',
-                 arrowprops=dict(arrowstyle='->',
-                                 connectionstyle="arc3,rad=-.45",
-                                 color='black',
-                                 mutation_scale=30,
-                                 lw=1.5)
-                )
+        starmer = df_2024[df_2024['ConstituencyName'].str.contains('Pancras', regex=False)]
+        sunak = df_2024[df_2024['ConstituencyName'].str.contains('Richmond', regex=False)]
+        sunak = sunak[['Lab PC', 'ASMR_f', 'ASMR_m']]
+        starmer = starmer[['Lab PC', 'ASMR_f', 'ASMR_m']]
 
-    ax2.annotate('Richmond\n(Yorks)',
-                 xy=(sunak['Lab PC'].iloc[0], sunak['ASMR_m'].iloc[0]),
-                 xytext=(sunak['Lab PC'].iloc[0], sunak['ASMR_m'].iloc[0] + 340),
-                 ha='center',
-                 va='bottom',
-                 arrowprops=dict(arrowstyle='->',
-                                 connectionstyle="arc3,rad=.45",
-                                 color='black',
-                                 mutation_scale=30,
-                                 lw=1.5)
-                )
-    ax2.annotate('Holborn and\nSt Pancras',
-                 xy=(starmer['Lab PC'].iloc[0], starmer['ASMR_m'].iloc[0]),
-                 xytext=(starmer['Lab PC'].iloc[0], starmer['ASMR_m'].iloc[0] + 370),
-                 ha='center',
-                 va='bottom',
-                 arrowprops=dict(arrowstyle='->',
-                                 connectionstyle="arc3,rad=-.45",
-                                 color='black',
-                                 mutation_scale=30,
-                                 lw=1.5)
-                )
+        ax1.annotate('Uxbridge and\nSouth Ruislip',
+                     xy=(johnson['Lab PC'].iloc[0], johnson['ASMR_f'].iloc[0]),
+                     xytext=(johnson['Lab PC'].iloc[0]-.2, johnson['ASMR_f'].iloc[0] + 150),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+        ax1.annotate('Islington North',
+                     xy=(corbyn['Lab PC'].iloc[0], corbyn['ASMR_f'].iloc[0]),
+                     xytext=(corbyn['Lab PC'].iloc[0], corbyn['ASMR_f'].iloc[0] + 255),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=-.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+
+        ax2.annotate('Uxbridge and\nSouth Ruislip',
+                     xy=(johnson['Lab PC'].iloc[0], johnson['ASMR_m'].iloc[0]),
+                     xytext=(johnson['Lab PC'].iloc[0] - .175, johnson['ASMR_m'].iloc[0] + 340),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+        ax2.annotate('Islington North',
+                     xy=(corbyn['Lab PC'].iloc[0], corbyn['ASMR_m'].iloc[0]),
+                     xytext=(corbyn['Lab PC'].iloc[0], corbyn['ASMR_m'].iloc[0] + 320),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=-.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+
+        ax3.annotate('Holborn and\nSt Pancras',
+                     xy=(starmer['Lab PC'].iloc[0], starmer['ASMR_f'].iloc[0]),
+                     xytext=(starmer['Lab PC'].iloc[0] + .15, starmer['ASMR_f'].iloc[0] + 225),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=-.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+
+                     )
+
+
+        ax3.annotate('Richmond and\nNorthallerton',
+                     xy=(sunak['Lab PC'].iloc[0], sunak['ASMR_f'].iloc[0]),
+                     xytext=(sunak['Lab PC'].iloc[0] -.05, sunak['ASMR_f'].iloc[0] + 260),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+
+        ax4.annotate('Holborn and\nSt Pancras',
+                     xy=(starmer['Lab PC'].iloc[0], starmer['ASMR_m'].iloc[0]),
+                     xytext=(starmer['Lab PC'].iloc[0] + .2, starmer['ASMR_m'].iloc[0] + 315),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=-.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
+
+
+        ax4.annotate('Richmond and\nNorthallerton',
+                     xy=(sunak['Lab PC'].iloc[0], sunak['ASMR_m'].iloc[0]),
+                     xytext=(sunak['Lab PC'].iloc[0] -.05, sunak['ASMR_m'].iloc[0] + 300),
+                     ha='center',
+                     va='bottom',
+                     arrowprops=dict(arrowstyle='->',
+                                     connectionstyle="arc3,rad=.45",
+                                     color='black',
+                                     mutation_scale=30,
+                                     lw=1.5)
+                     )
     sns.despine()
-    plt.savefig(os.path.join(os.getcwd(), '..', 'output', 'health_by_constituency_scatter.pdf'),
-                bbox_inches = 'tight')
-    plt.savefig(os.path.join(os.getcwd(), '..', 'output', 'health_by_constituency_scatter.svg'),
-                bbox_inches = 'tight')
+    plt.savefig(os.path.join(os.getcwd(),
+                             '..',
+                             'output',
+                              config_list[1] + '_by_constituency_scatter.pdf'),
+                bbox_inches='tight')
+    plt.savefig(os.path.join(os.getcwd(),
+                             '..',
+                             'output',
+                             config_list[1] + 'health_by_constituency_scatter.svg'),
+                bbox_inches='tight')
 
 
-def make_merged():
+def make_merged(year):
     mortality_fname = 'prematuredeathsandagestandardisedmortalityratesbyparlimentaryconsituencyandsexin2021.xlsx'
     df_mortality_m = pd.read_excel(os.path.join('..', 'data', 'raw', 'mortality',
                                                 mortality_fname),
@@ -771,7 +1510,7 @@ def make_merged():
                                    sheet_name='Data constituencies'
                                   )
     df_voting = pd.read_excel(os.path.join('..', 'data', 'raw', 'voting',
-                                           'HoC-GE2019-results-by-constituency.xlsx'),
+                                           'HoC-GE'+str(year)+'-results-by-constituency.xlsx'),
                               sheet_name='Data'
                              )
     df_mortality_m = df_mortality_m.rename({'ASMR': 'ASMR_m'},
@@ -785,26 +1524,32 @@ def make_merged():
     asmr = asmr[['Parliamentary Constituency ',
                  'ASMR_f',
                  'ASMR_m']]
-
+    print('Note: dropping all constituencies thare are outside of England here.')
     df_voting = df_voting[df_voting['Country name']=='England']
-    df_deprivation['ConstituencyName'] = df_deprivation['ConstituencyName'].str.title()
-    df_voting['Constituency name'] = df_voting['Constituency name'].str.title()
-    df_m = pd.merge(df_deprivation,
-                         df_voting,
-                         how='left',
-                         left_on='ConstituencyName',
-                         right_on='Constituency name'
-                        )
+    df_deprivation['ConstituencyName'] = df_deprivation['ConstituencyName'].str.title().str.strip()
+    df_deprivation['ConstituencyName'] = df_deprivation['ConstituencyName'].str.replace(r'[^a-zA-Z\s]', '', regex=True)
+    df_voting['Constituency name'] = df_voting['Constituency name'].str.title().str.strip()
+    df_voting['Constituency name'] = df_voting['Constituency name'].str.replace(r'[^a-zA-Z\s]', '', regex=True)
+    df_m = pd.merge(df_voting,
+                    df_deprivation,
+                    how='left',
+                    right_on='ConstituencyName',
+                    left_on='Constituency name'
+                    )
     df_m = pd.merge(df_m,
-                         asmr,
-                         how='left',
-                         left_on='ONSConstID',
-                         right_on='Parliamentary Constituency '
-                        )
+                    asmr,
+                    how='left',
+                    left_on='ONSConstID',
+                    right_on='Parliamentary Constituency '
+                    )
     df_m['Con PC'] = df_m['Con']/df_m['Valid votes']
     df_m['Lab PC'] = df_m['Lab']/df_m['Valid votes']
     df_m['Lib PC'] = df_m['LD'] / df_m['Valid votes']
-    df_m['Brx PC'] = df_m['BRX'] / df_m['Valid votes']
+    df_m['Vote PC'] = (df_m['Valid votes']+df_m['Invalid votes'])/df_m['Electorate']
+    if year==2019:
+        df_m['Brx PC'] = df_m['BRX'] / df_m['Valid votes']
+    else:
+        df_m['RUK PC'] = df_m['RUK'] / df_m['Valid votes']
     df_m['first_party_3'] = np.where((df_m['First party']=='Lab') |
                                           (df_m['First party']=='Con'),
                                            df_m['First party'],
@@ -881,7 +1626,6 @@ def make_merged():
     df_m = df_m.rename({'prevalence%': 'prevalence%_LD'}, axis=1)
     df_m = df_m.drop('pcon_code', axis=1)
 
-
     df_nhs_Obesity = df_nhs[df_nhs['condition'] == 'Obesity']
     df_m = pd.merge(df_m,
                     df_nhs_Obesity[['pcon_code', 'prevalence%']],
@@ -890,7 +1634,6 @@ def make_merged():
                     right_on='pcon_code')
     df_m = df_m.rename({'prevalence%': 'prevalence%_Obesity'}, axis=1)
     df_m = df_m.drop('pcon_code', axis=1)
-
     return df_m
 
 
