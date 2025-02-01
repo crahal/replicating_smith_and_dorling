@@ -474,6 +474,11 @@ def make_df_gpd_census(year):
                                             '2024',
                                             'PCON_JULY_2024_UK_BFC.shp')
                                )
+        border["geometry"] = border["geometry"].simplify(
+            tolerance=400,
+            preserve_topology=True
+        )
+
         health = pd.read_csv(os.path.join(os.getcwd(),
                                             '..',
                                             'data',
