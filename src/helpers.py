@@ -143,8 +143,7 @@ def make_merged_2024():
                                       'check_those_not_in_lookup.csv')
     not_in_merged.to_csv(not_in_merged_path)
     print('The length of our final 2024 dataframe is:', len(df_m))
-    print('The ' + str(len(not_in_merged)) + ' which get dropped saved to:\n'
-          './data/derived/check_those_not_in_lookup.csv')
+    print('The ' + str(len(not_in_merged)) + ' which get dropped saved to: ../data/derived/check_those_not_in_lookup.csv')
     return df_m
 
 
@@ -184,7 +183,7 @@ def plot_bivariate_choropleth_map_census(df_gpd_2019, df_gpd_2024, party_list):
     df_gpd_2024.to_csv(os.path.join(os.getcwd(), '..', 'data', 'derived', party_list[0]+'_ranked_data_2024.csv'))
 
     plotter.plot_bivariate_choropleth(df_gpd_2019, ax=axs[0, 0])
-    plotter.plot_inset_legend(axs[0, 0], 'Proportion Bad\nHealth (2019)',
+    plotter.plot_inset_legend(axs[0, 0], 'Proportion Not\nGood Health (2019)',
                               party_list[1] + ' Vote Percentile\n(2019)')
     axs[0, 0].set_xlim(125000, 660000)
     axs[0, 0].set_ylim(10000, 675000)
@@ -211,7 +210,7 @@ def plot_bivariate_choropleth_map_census(df_gpd_2019, df_gpd_2024, party_list):
                        xycoords=axs[1, 0].transAxes)
 
     plotter.plot_bivariate_choropleth(df_gpd_2024, ax=axs[0, 1])
-    plotter.plot_inset_legend(axs[0, 1], 'Proportion Bad\nHealth (2024)', party_list[1] + ' Vote Percentile\n(2024)')
+    plotter.plot_inset_legend(axs[0, 1], 'Proportion Not\nGood Health (2024)', party_list[1] + ' Vote Percentile\n(2024)')
     axs[0, 1].set_xlim(125000, 660000)
     axs[0, 1].set_ylim(10000, 675000)
     axs[0, 1].set_title('b.', fontsize=35, loc='left', y=0.965, x=.0)
@@ -647,32 +646,6 @@ def check_constituency_numbers():
     print('#2024 constituencies in asmr df after stripping/titlecasing/removing non-ascii:', length)
 
 
-
-def make_summary_tables(df_gpd):
-    party_share = ['Con PC', 'Lab PC', 'Lib PC', 'Brx PC']
-    crosstab_var = ['ASMR_f',
-                    'ASMR_m',
-                    'Income',
-                    'Employment',
-                    'Education, skills and training',
-                    'Health deprivation and disability',
-                    'IMD rank 2019'
-                   ]
-
-    table_rho = pd.DataFrame(columns=party_share, index=crosstab_var)
-    table_p = pd.DataFrame(columns=party_share, index=crosstab_var)
-    for col in party_share:
-        for index in crosstab_var:
-            if '%' in index:
-                df_gpd[index] = df_gpd[index].rank(ascending=True)
-            rho, p = spearmanr(df_gpd[col].rank(ascending=True),
-                               df_gpd[index]
-                               )
-            table_rho.loc[index, col] = rho
-            table_p.loc[index, col] = p
-    return table_rho, table_p
-
-
 def plot_over_time(df_sii, df_hid):
     colors = ['#E4003B', '#0087DC', '#4a6741']
     fig = plt.figure(figsize=(11, 5.5))
@@ -1073,8 +1046,8 @@ class BivariateChoroplethPlotter:
                       color=geometry['color_bivariate'],
                       alpha=self.alpha_value,
                       legend=False,
-                      edgecolor='w',
-                      linewidth=0.25)
+                      #edgecolor='w',
+                      linewidth=0.00)
         ax.set_xticks([])
         ax.set_yticks([])
         return fig, ax
@@ -1272,8 +1245,6 @@ def plot_scatters(df_2019, df_2024,
     df_2024 = df_2024[df_2024['ASMR_f'].notnull()]
     print('The length of the 2019 data going into the scatters is: ', len(df_2019))
     print('The length of the 2024 data going into the scatters is: ', len(df_2024))
-    df_2019.to_csv('2019_test.csv')
-    df_2019.to_csv('2024_test.csv')
     color_mapping = {
         'Lab': '#E4003B',
         'Con': '#0087DC',
@@ -1371,7 +1342,7 @@ def plot_scatters(df_2019, df_2024,
     ax2.add_artist(at)
     print(f'2019: {config_list[1]} vote share vs ASMR (M) pearsons r: {lab_asmr_m_r_2019}, p-value {lab_asmr_m_p_2019}')
 
-    lab_asmr_m_r_2024, lab_asmr_m_p_2024 = pearsonr(df_2024['Lab PC'], df_2024['ASMR_m'])
+    lab_asmr_m_r_2024, lab_asmr_m_p_2024 = pearsonr(df_2024[config_list[0]], df_2024['ASMR_m'])
     lab_asmr_m_r_2024 = np.round(lab_asmr_m_r_2024, 3)
     at = AnchoredText(
         r"$r$ = " + str(lab_asmr_m_r_2024), prop=dict(size=13),
@@ -1487,6 +1458,10 @@ def plot_scatters(df_2019, df_2024,
                                      lw=1.5)
                      )
     sns.despine()
+    ax1.set_xlabel(config_list[1] + ' Vote Share (2019)', fontsize=14)
+    ax2.set_xlabel(config_list[1] + ' Vote Share (2019)', fontsize=14)
+    ax3.set_xlabel(config_list[1] + ' Vote Share (2024)', fontsize=14)
+    ax4.set_xlabel(config_list[1] + ' Vote Share (2024)', fontsize=14)
     plt.savefig(os.path.join(os.getcwd(),
                              '..',
                              'output',
@@ -1495,7 +1470,7 @@ def plot_scatters(df_2019, df_2024,
     plt.savefig(os.path.join(os.getcwd(),
                              '..',
                              'output',
-                             config_list[1] + 'health_by_constituency_scatter.svg'),
+                             config_list[1] + '_by_constituency_scatter.svg'),
                 bbox_inches='tight')
 
 
